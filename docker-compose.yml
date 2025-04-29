@@ -1,0 +1,42 @@
+
+services:
+  # frontend service - stellt die react app bereit
+  frontend:
+    build: ./frontend  # verweist auf den ordner mit dem frontend dockerfile
+    ports:
+      - "3000:3000"    # port mapping: host:container
+    depends_on:
+      - backend        # frontend startet erst nachdem backend gestartet ist
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000/api  # backend api url für das frontend
+    volumes:
+      - ./frontend:/app  # für hot-reloading (änderungen werden sofort übernommen)
+      - /app/node_modules  # verhindert überschreiben der node_modules im container
+
+  # backend service - express api server
+  backend:
+    build: ./backend   # verweist auf den ordner mit dem backend dockerfile
+    ports:
+      - "5000:5000"    # port mapping für den api server
+    depends_on:
+      - mongo          # backend startet erst nachdem die datenbank gestartet ist
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/taskdb  # verbindung zur mongodb
+      - PORT=5000      # port auf dem der api server läuft
+    volumes:
+      - ./backend:/app  # für hot-reloading
+      - /app/node_modules
+
+  # mongo service - datenbank für unsere anwendung
+  mongo:
+    image: mongo:latest  # wir nutzen das offizielle mongo image
+    ports:
+      - "27017:27017"  # port mapping für mongo
+    volumes:
+      - mongo-data:/data/db  # persistente speicherung der daten
+    environment:
+      - MONGO_INITDB_DATABASE=taskdb  # name der datenbank
+
+# volumes definition für persistente daten
+volumes:
+  mongo-data:  # damit bleiben die daten auch nach container neustart erhalten

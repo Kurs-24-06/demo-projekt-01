@@ -740,6 +740,8 @@ userSchema.pre('save', async function(next) {
 });
 ```
 
+**Erklärung**: In der Datei `User.js` wird ein Pre-Save-Hook implementiert, der vor dem Speichern eines Benutzers automatisch das Passwort sicher hasht. Dies geschieht nur, wenn das Passwort neu ist oder geändert wurde. Bcrypt erstellt für jedes Passwort einen individuellen Salt und kombiniert diesen mit dem Passwort. Der resultierende Hash ist hochsicher gegen Brute-Force- und Rainbow-Table-Angriffe. Die 10 Runden bieten einen guten Kompromiss zwischen Sicherheit und Geschwindigkeit.
+
 ### 2. JWT (JSON Web Token) für Authentifizierung
 
 - **Stateless Authentication**: Keine Sessions werden auf dem Server gespeichert
@@ -757,6 +759,8 @@ const token = jwt.sign(
 );
 ```
 
+**Erklärung**: In der Datei `authRoutes.js` wird nach erfolgreicher Anmeldung oder Registrierung ein JWT erstellt. Dieses Token enthält die Benutzer-ID und den Benutzernamen, wird mit einem geheimen Schlüssel signiert und hat eine begrenzte Gültigkeitsdauer. Der Token wird an den Client gesendet und dient bei zukünftigen Anfragen als Authentifizierungsnachweis. Der große Vorteil ist, dass der Server keine Session-Daten speichern muss, da alle notwendigen Informationen im Token selbst enthalten sind.
+
 ### 3. Autorisierung mit Middleware
 
 - **Authentifizierungs-Middleware**: Prüft JWT bei jeder Anfrage an geschützte Routen
@@ -769,7 +773,15 @@ Beispiel aus dem Code:
 const auth = (req, res, next) => {
   try {
     // Token aus dem Authorization Header extrahieren
-    const token = req.header('Authorization').replace('Bearer ', '');
+    const authHeader = req.header('Authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        message: 'Zugriff verweigert. Token fehlt oder hat ungültiges Format.' 
+      });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
     
     // Token verifizieren und decodieren
     const decoded = jwt.verify(token, JWT_SECRET);
@@ -786,6 +798,8 @@ const auth = (req, res, next) => {
   }
 };
 ```
+
+**Erklärung**: Die Datei `auth.js` enthält eine Express-Middleware-Funktion, die vor der Ausführung geschützter Routen überprüft, ob ein gültiges JWT vorhanden ist. Die Middleware extrahiert das Token aus dem Authorization-Header, verifiziert seine Gültigkeit mit dem geheimen Schlüssel und dekodiert die enthaltenen Benutzerinformationen. Diese werden dann an das Request-Objekt angehängt, sodass nachfolgende Route-Handler wissen, welcher Benutzer die Anfrage stellt. Bei ungültigen oder fehlenden Tokens wird eine 401-Fehlermeldung zurückgegeben.
 
 ### 4. Frontend-Authentifizierungsmanagement
 
@@ -808,6 +822,8 @@ const createAuthClient = () => {
   });
 };
 ```
+
+**Erklärung**: In der Datei `authService.js` wird eine Hilfsfunktion implementiert, die einen konfigurierten Axios-Client zurückgibt. Dieser Client fügt automatisch den im localStorage gespeicherten JWT als Authorization-Header zu jeder API-Anfrage hinzu. Dadurch müssen die Komponenten, die den Service nutzen, sich nicht um die Authentifizierungsdetails kümmern. Dieser zentrale Ansatz vereinfacht die Wartung und stellt sicher, dass alle Anfragen konsistent authentifiziert werden.
 
 ## Komponenten des Authentifizierungssystems
 
@@ -952,3 +968,47 @@ const createAuthClient = () => {
 - **CORS**: Cross-Origin Resource Sharing ist konfiguriert, um nur Anfragen von vertrauenswürdigen Quellen zuzulassen
 - **XSS-Schutz**: React schützt standardmäßig vor den meisten XSS-Angriffen
 - **CSRF-Schutz**: Token-basierte Authentifizierung bietet inhärenten Schutz vor CSRF-Angriffen
+
+## Vollständiger Login-Flow im Detail
+
+Hier ist der vollständige Datenfluss beim Login:
+
+1. **Benutzerinteraktion** (`Login.js`):
+   - Benutzer gibt Anmeldedaten ein und klickt auf "Anmelden"
+   - `handleSubmit`-Funktion validiert Eingaben und ruft `onLogin` auf
+
+2. **App-Komponente** (`App.js`):
+   - `handleLogin`-Funktion empfängt Anmeldedaten
+   - Ruft `authService.login()` mit den Daten auf
+
+3. **Auth-Service** (`authService.js`):
+   - Sendet POST-Request an `/api/auth/login`
+   - Verarbeitet Antwort und speichert Token
+
+4. **Backend-Route** (`authRoutes.js`):
+   - Empfängt Anfrage und sucht Benutzer in der Datenbank
+   - Ruft `user.comparePassword()` auf, um Passwort zu vergleichen
+
+5. **User-Model** (`User.js`):
+   - Vergleicht eingegebenes Passwort mit gespeichertem Hash
+   - Gibt boolean zurück (true/false)
+
+6. **Backend-Route** (Fortsetzung):
+   - Bei erfolgreicher Authentifizierung:
+     - Generiert JWT mit Benutzerinformationen
+     - Aktualisiert `lastLogin` des Benutzers
+     - Sendet Token und Benutzerinfos zurück
+
+7. **Auth-Service** (Fortsetzung):
+   - Empfängt Token und Benutzerinfos
+   - Speichert beides im localStorage
+
+8. **App-Komponente** (Fortsetzung):
+   - Setzt Authentifizierungsstatus und aktuellen Benutzer
+   - Lädt Benutzerdaten (Tasks) vom Backend
+
+9. **Rendering**:
+   - App zeigt nun die authentifizierte Benutzeroberfläche an
+   - Benutzer kann mit Tasks arbeiten
+
+Diese Architektur stellt sicher, dass die Authentifizierung sicher, performant und benutzerfreundlich ist, während sie gleichzeitig moderne Entwicklungspraktiken und Sicherheitsstandards einhält.

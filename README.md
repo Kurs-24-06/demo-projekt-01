@@ -89,6 +89,8 @@ Nach dem Start:
   - Express.js für REST API
   - Mongoose als MongoDB-Schnittstelle
   - Cors für Cross-Origin Resource Sharing
+  - JWT für Authentifizierung
+  - Bcrypt für Passwort-Hashing
 
 - **Datenbank**:
   - MongoDB
@@ -98,7 +100,8 @@ Nach dem Start:
   - Docker Compose
 
 
-# Das Zusammenspiel der Multi-Tier-Anwendung - Eine anfängerfreundliche Erklärung
+
+# Das Zusammenspiel der Multi-Tier-Anwendung
 
 ## Was ist eine Multi-Tier-Anwendung?
 
@@ -694,3 +697,258 @@ Docker sorgt dafür, dass:
 4. Die Ports korrekt nach außen (zum Host-System) geleitet werden
 
 Die Container kommunizieren über das interne Docker-Netzwerk, das von Docker Compose erstellt wird. Dabei können sie sich über ihre Service-Namen ansprechen (z.B. "mongo" statt "localhost").
+
+
+# Authentifizierungssystem
+
+Die Anwendung verfügt über ein modernes Authentifizierungssystem nach aktuellen Sicherheitsstandards. Im Folgenden wird erklärt, wie die Authentifizierung funktioniert und welche Komponenten zusammenspielen.
+
+## Grundlegende Funktionen
+
+- **Registrierung**: Neue Benutzer können sich mit Benutzername, E-Mail und Passwort registrieren
+- **Login**: Registrierte Benutzer können sich mit Benutzername/E-Mail und Passwort anmelden
+- **Geschützte Routen**: Nur authentifizierte Benutzer können auf bestimmte API-Endpunkte zugreifen
+- **Benutzerbezogene Daten**: Jeder Benutzer sieht nur seine eigenen Tasks
+
+## Sicherheitskonzepte im Authentifizierungssystem
+
+### 1. Sichere Passwort-Speicherung
+
+- **Bcrypt-Hashing**: Passwörter werden niemals im Klartext gespeichert, sondern mit Bcrypt gehasht
+- **Salt-Generierung**: Jedes Passwort wird mit einem eindeutigen Salt gehasht, um Rainbow-Table-Angriffe zu verhindern
+- **Adaptive Kosten**: Bcrypt erlaubt die Anpassung der Hash-Komplexität (Rounds) an die verfügbare Rechenleistung
+
+Beispiel aus dem Code:
+```javascript
+// Im User-Model (backend/src/models/User.js)
+userSchema.pre('save', async function(next) {
+  if (!user.isModified('password')) return next();
+  
+  try {
+    // Salt generieren (10 Rounds)
+    const salt = await bcrypt.genSalt(10);
+    
+    // Passwort mit Salt hashen
+    const hashedPassword = await bcrypt.hash(user.password, salt);
+    
+    // Plain Passwort mit dem Hash ersetzen
+    user.password = hashedPassword;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+```
+
+### 2. JWT (JSON Web Token) für Authentifizierung
+
+- **Stateless Authentication**: Keine Sessions werden auf dem Server gespeichert
+- **Token-basierte Authentifizierung**: Nach erfolgreicher Anmeldung erhält der Client einen JWT
+- **Signierte Tokens**: JWTs werden mit einem geheimen Schlüssel signiert, um Manipulationen zu verhindern
+- **Begrenzte Gültigkeit**: Tokens laufen nach einer bestimmten Zeit ab (hier: 24 Stunden)
+
+Beispiel aus dem Code:
+```javascript
+// In authRoutes.js (backend/src/routes/authRoutes.js)
+const token = jwt.sign(
+  { userId: user._id, username: user.username }, 
+  JWT_SECRET, 
+  { expiresIn: JWT_EXPIRES_IN } 
+);
+```
+
+### 3. Autorisierung mit Middleware
+
+- **Authentifizierungs-Middleware**: Prüft JWT bei jeder Anfrage an geschützte Routen
+- **Extrahieren von Benutzerinformationen**: Die Middleware extrahiert die Benutzer-ID und den Benutzernamen aus dem JWT
+- **Zugriffsbeschränkung**: Benutzer können nur auf ihre eigenen Ressourcen zugreifen (z.B. eigene Tasks)
+
+Beispiel aus dem Code:
+```javascript
+// In auth.js (backend/src/middleware/auth.js)
+const auth = (req, res, next) => {
+  try {
+    // Token aus dem Authorization Header extrahieren
+    const token = req.header('Authorization').replace('Bearer ', '');
+    
+    // Token verifizieren und decodieren
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Benutzerinformationen an Request-Objekt anhängen
+    req.user = {
+      id: decoded.userId,
+      username: decoded.username
+    };
+    
+    next();
+  } catch (error) {
+    res.status(401).json({ message: 'Nicht autorisiert' });
+  }
+};
+```
+
+### 4. Frontend-Authentifizierungsmanagement
+
+- **Token-Speicherung**: JWTs werden im localStorage des Browsers gespeichert
+- **Automatische Anmeldung**: Beim Neuladen der Seite wird der gespeicherte Token verwendet
+- **Authentifizierte Anfragen**: Jede API-Anfrage an geschützte Routen enthält den JWT im Authorization-Header
+- **Logout-Funktionalität**: Entfernt den Token und setzt den Authentifizierungsstatus zurück
+
+Beispiel aus dem Code:
+```javascript
+// In authService.js (frontend/src/services/authService.js)
+const createAuthClient = () => {
+  const token = localStorage.getItem('token');
+  return axios.create({
+    baseURL: API_URL,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: token ? `Bearer ${token}` : '',
+    },
+  });
+};
+```
+
+## Komponenten des Authentifizierungssystems
+
+### Backend-Komponenten
+
+1. **User Model** (backend/src/models/User.js)
+   - Definiert die Struktur der Benutzerdaten in der Datenbank
+   - Implementiert Passwort-Hashing mit Bcrypt
+   - Bietet Methoden zum Vergleichen von Passwörtern
+
+2. **Auth Middleware** (backend/src/middleware/auth.js)
+   - Validiert JWTs bei Anfragen an geschützte Routen
+   - Extrahiert Benutzerinformationen und fügt sie dem Request-Objekt hinzu
+   - Blockiert unauthentifizierte Anfragen
+
+3. **Auth Routes** (backend/src/routes/authRoutes.js)
+   - Stellt Endpunkte für Registrierung, Login und Benutzerprofile bereit
+   - Erstellt und verwaltet JWTs
+   - Implementiert Fehlerbehandlung für Authentifizierungsprobleme
+
+4. **Task Routes** (backend/src/routes/taskRoutes.js)
+   - Schützt alle Task-bezogenen Endpunkte mit der Auth-Middleware
+   - Filtert Daten basierend auf der Benutzer-ID
+   - Implementiert Berechtigungsprüfungen für Ressourcenzugriff
+
+### Frontend-Komponenten
+
+1. **Auth Service** (frontend/src/services/authService.js)
+   - Kommuniziert mit den Auth-Endpunkten des Backends
+   - Verwaltet Token-Speicherung und -Abruf
+   - Bietet Hilfsfunktionen für den Authentifizierungsstatus
+
+2. **Task Service** (frontend/src/services/taskService.js)
+   - Fügt automatisch den JWT zu Anfragen an das Backend hinzu
+   - Verwaltet CRUD-Operationen für Tasks mit authentifizierten Anfragen
+
+3. **Login Component** (frontend/src/components/Login.js)
+   - Stellt das Login-Formular bereit
+   - Verarbeitet Benutzeranmeldedaten
+   - Zeigt Fehler bei fehlgeschlagener Authentifizierung an
+
+4. **Register Component** (frontend/src/components/Register.js)
+   - Stellt das Registrierungsformular bereit
+   - Validiert Benutzereingaben (E-Mail-Format, Passwortlänge usw.)
+   - Verarbeitet die Benutzerregistrierung
+
+5. **App Component** (frontend/src/App.js)
+   - Verwaltet den globalen Authentifizierungszustand
+   - Rendert bedingt verschiedene Komponenten basierend auf dem Authentifizierungsstatus
+   - Implementiert Logout-Funktionalität
+
+## Authentifizierungsfluss
+
+### Registrierungsprozess
+
+1. **Benutzer füllt Registrierungsformular aus**:
+   - Gibt Benutzername, E-Mail und Passwort ein
+   - Frontend validiert die Eingaben (Passwortlänge, E-Mail-Format)
+
+2. **Frontend sendet Registrierungsanfrage**:
+   - POST-Anfrage an `/api/auth/register` mit Benutzerdaten
+   - Daten werden im JSON-Format gesendet
+
+3. **Backend verarbeitet die Registrierung**:
+   - Prüft, ob Benutzername oder E-Mail bereits existiert
+   - Validiert die Eingabefelder serverseitig
+   - Erstellt einen neuen Benutzer mit gehaschtem Passwort
+   - Generiert ein JWT für den neuen Benutzer
+
+4. **Backend sendet Erfolgsantwort**:
+   - Status 201 (Created)
+   - JWT und Benutzerinformationen (ohne Passwort)
+
+5. **Frontend verarbeitet die Erfolgsantwort**:
+   - Speichert das JWT im localStorage
+   - Setzt den Authentifizierungsstatus auf `true`
+   - Zeigt die Task-Manager-Oberfläche an
+
+### Login-Prozess
+
+1. **Benutzer füllt Login-Formular aus**:
+   - Gibt Benutzername/E-Mail und Passwort ein
+
+2. **Frontend sendet Login-Anfrage**:
+   - POST-Anfrage an `/api/auth/login` mit Anmeldedaten
+   - Daten werden im JSON-Format gesendet
+
+3. **Backend verarbeitet das Login**:
+   - Sucht den Benutzer in der Datenbank
+   - Vergleicht das eingegebene Passwort mit dem gespeicherten Hash
+   - Bei Erfolg: Generiert ein JWT
+   - Bei Fehler: Sendet eine entsprechende Fehlermeldung
+
+4. **Backend sendet Erfolgsantwort**:
+   - Status 200 (OK)
+   - JWT und Benutzerinformationen (ohne Passwort)
+
+5. **Frontend verarbeitet die Erfolgsantwort**:
+   - Speichert das JWT im localStorage
+   - Setzt den Authentifizierungsstatus auf `true`
+   - Zeigt die Task-Manager-Oberfläche an
+
+### Authentifizierte Anfragen
+
+1. **Frontend erstellt eine authentifizierte Anfrage**:
+   - Fügt den JWT als Bearer-Token im Authorization-Header hinzu
+   - Sendet die Anfrage an einen geschützten Endpunkt
+
+2. **Backend verarbeitet die Anfrage**:
+   - Auth-Middleware prüft den JWT
+   - Extrahiert Benutzerinformationen
+   - Leitet die Anfrage an den entsprechenden Route-Handler weiter
+
+3. **Route-Handler verarbeitet die Anfrage**:
+   - Greift auf die Benutzerinformationen zu (req.user)
+   - Filtert Daten basierend auf der Benutzer-ID
+   - Prüft Berechtigungen für den angeforderten Vorgang
+   - Führt die angeforderte Operation aus
+
+4. **Backend sendet Antwort**:
+   - Bei Erfolg: Gewünschte Daten mit Status 200
+   - Bei Fehler: Entsprechende Fehlermeldung
+
+5. **Frontend verarbeitet die Antwort**:
+   - Bei 401 (Unauthorized): Benutzer wird ausgeloggt
+   - Bei Erfolg: Aktualisiert die Benutzeroberfläche
+
+### Logout-Prozess
+
+1. **Benutzer klickt auf Logout**:
+   - Logout-Funktion wird aufgerufen
+
+2. **Frontend verarbeitet Logout**:
+   - Entfernt JWT aus localStorage
+   - Setzt Authentifizierungsstatus auf `false`
+   - Zeigt die Login/Register-Oberfläche an
+
+## Sicherheitsüberlegungen
+
+- **HTTPS**: In Produktionsumgebungen sollte immer HTTPS verwendet werden, um JWT-Übertragungen zu schützen
+- **JWT Secret**: Das Geheimnis für JWT-Signaturen sollte in Produktionsumgebungen als Umgebungsvariable gesetzt werden
+- **CORS**: Cross-Origin Resource Sharing ist konfiguriert, um nur Anfragen von vertrauenswürdigen Quellen zuzulassen
+- **XSS-Schutz**: React schützt standardmäßig vor den meisten XSS-Angriffen
+- **CSRF-Schutz**: Token-basierte Authentifizierung bietet inhärenten Schutz vor CSRF-Angriffen

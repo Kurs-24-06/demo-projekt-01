@@ -2,12 +2,18 @@
 const express = require('express');
 const router = express.Router();
 const Task = require('../models/Task');
+const auth = require('../middleware/auth');
 
-// GET /api/tasks - alle tasks abrufen
+// alle routes benötigen nun authentication
+// auth middleware wird für alle routes in diesem router angewendet
+router.use(auth);
+
+// GET /api/tasks - alle tasks des eingeloggten benutzers abrufen
 router.get('/', async (req, res) => {
   try {
-    // alle tasks aus der datenbank holen, nach erstelldatum sortiert
-    const tasks = await Task.find().sort({ createdAt: -1 });
+    // nur tasks des eingeloggten benutzers abrufen
+    // durch die auth middleware haben wir zugriff auf req.user.id
+    const tasks = await Task.find({ user: req.user.id }).sort({ createdAt: -1 });
     res.json(tasks);
   } catch (err) {
     // fehlerbehandlung mit passendem status code
@@ -20,7 +26,11 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     // aus dem request body ein neues task objekt erstellen
-    const newTask = new Task(req.body);
+    // user id aus dem auth middleware hinzufügen
+    const newTask = new Task({
+      ...req.body,
+      user: req.user.id // benutzer-id vom authentifizierten benutzer
+    });
     
     // in der datenbank speichern
     const savedTask = await newTask.save();
@@ -42,13 +52,21 @@ router.post('/', async (req, res) => {
 // DELETE /api/tasks/:id - task löschen
 router.delete('/:id', async (req, res) => {
   try {
-    // task anhand der id finden und löschen
-    const deletedTask = await Task.findByIdAndDelete(req.params.id);
+    // task anhand der id finden
+    const task = await Task.findById(req.params.id);
     
-    if (!deletedTask) {
+    if (!task) {
       // wenn task nicht gefunden wurde, 404 zurückgeben
       return res.status(404).json({ message: 'task nicht gefunden' });
     }
+    
+    // sicherstellen, dass der benutzer nur seine eigenen tasks löschen kann
+    if (task.user.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'keine berechtigung zum löschen dieses tasks' });
+    }
+    
+    // task löschen
+    await Task.findByIdAndDelete(req.params.id);
     
     res.json({ message: 'task erfolgreich gelöscht' });
   } catch (err) {
@@ -60,17 +78,25 @@ router.delete('/:id', async (req, res) => {
 // PUT /api/tasks/:id - task aktualisieren
 router.put('/:id', async (req, res) => {
   try {
-    // task suchen und aktualisieren
+    // task suchen
+    const task = await Task.findById(req.params.id);
+    
+    if (!task) {
+      return res.status(404).json({ message: 'task nicht gefunden' });
+    }
+    
+    // sicherstellen, dass der benutzer nur seine eigenen tasks aktualisieren kann
+    if (task.user.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'keine berechtigung zum aktualisieren dieses tasks' });
+    }
+    
+    // task aktualisieren
     // new: true gibt das aktualisierte dokument zurück
     const updatedTask = await Task.findByIdAndUpdate(
       req.params.id,
       req.body,
       { new: true, runValidators: true }
     );
-    
-    if (!updatedTask) {
-      return res.status(404).json({ message: 'task nicht gefunden' });
-    }
     
     res.json(updatedTask);
   } catch (err) {
